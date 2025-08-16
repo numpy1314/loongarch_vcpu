@@ -1,5 +1,5 @@
 [package]
-edition = "2025"
+edition = "2024"
 name = "loongarch_vcpu"
 version = "0.1.0"
 authors = [
