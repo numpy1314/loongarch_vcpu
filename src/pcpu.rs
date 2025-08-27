@@ -3,7 +3,7 @@ use core::{cell::OnceCell, marker::PhantomData};
 use axerrno::AxResult;
 use axvcpu::{AxArchPerCpu, AxVCpuHal};
 
-/// LoongArch64 每核数据结构
+/// Per-CPU data. A pointer to this struct is loaded into TP when a CPU starts. This structure
 #[repr(C)]
 #[repr(align(4096))]
 pub struct LoongArch64PerCpu<H: AxVCpuHal> {
@@ -55,5 +55,3 @@ impl<H: AxVCpuHal> AxArchPerCpu for LoongArch64PerCpu<H> {
         Ok(())
     }
 }
-
-

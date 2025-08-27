@@ -1,5 +1,5 @@
 use axaddrspace::GuestPhysAddr;
-use axerrno::{AxResult, AxError};
+use axerrno::{AxError, AxResult};
 
 /// 获取异常综合信息寄存器（LoongArch: ESTAT/ESUBCL 等）原始值
 #[inline(always)]
@@ -23,7 +23,7 @@ pub fn exception_class() -> Option<u64> {
 /// 获取异常类别原始数值
 #[inline(always)]
 pub fn exception_class_value() -> usize {
-    ((exception_esr() >> 16) & 0x3f) as usize
+    ((exception_esr() >> 16) & 0x3f)
 }
 
 /// 获取导致异常的访存地址（BADV）并返回 GPA

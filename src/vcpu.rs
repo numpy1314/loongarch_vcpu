@@ -97,10 +97,10 @@ impl<H: AxVCpuHal> axvcpu::AxArchVCpu for LoongArch64VCpu<H> {
 
     fn set_ept_root(&mut self, ept_root: HostPhysAddr) -> AxResult {
         debug!("set vcpu ept root:{ept_root:#x}");
-        
+
         self.guest_system_regs.pgdl = ept_root.as_usize();
         self.guest_system_regs.pgdh = ept_root.as_usize();
-        
+
         Ok(())
     }
 
@@ -131,7 +131,7 @@ impl<H: AxVCpuHal> axvcpu::AxArchVCpu for LoongArch64VCpu<H> {
     }
 
     fn inject_interrupt(&mut self, vector: usize) -> AxResult {
-        // TODO: 实现龙芯架构的中断注入        
+        // TODO: 实现龙芯架构的中断注入
         Ok(())
     }
 
@@ -144,33 +144,33 @@ impl<H: AxVCpuHal> axvcpu::AxArchVCpu for LoongArch64VCpu<H> {
 // Private function
 impl<H: AxVCpuHal> LoongArch64VCpu<H> {
     fn init_hv(&mut self, config: LoongArch64VCpuSetupConfig) {
-        // TODO: 初始化龙芯架构的虚拟机上下文        
+        // TODO: 初始化龙芯架构的虚拟机上下文
         self.init_vm_context(config);
     }
 
     /// Init guest context. Also set some system register value.
     fn init_vm_context(&mut self, config: LoongArch64VCpuSetupConfig) {
         // hvisor/src/arch/loongarch64/trap.rs中的dump_reset_gcsrs函数
-        
+
         // hvisor/src/arch/loongarch64/paging.rs中的set_pwcl_pwch_stlbps函数
         self.set_pwcl_pwch_stlbps();
-        
+
         // 初始化页表相关寄存器
         self.guest_system_regs.pgdl = 0; // 页表根地址低32位
         self.guest_system_regs.pgdh = 0; // 页表根地址高32位
         self.guest_system_regs.asid = 1; // 设置地址空间ID为1（虚拟机专用）
-        
+
         // 初始化定时器相关寄存器
         self.guest_system_regs.tcfg = 0; // 定时器配置，初始禁用
         self.guest_system_regs.tval = 0; // 定时器值
         self.guest_system_regs.cntc = 0; // 计数器值
-        
+
         // 初始化其他系统寄存器
-        self.guest_system_regs.crmd = 0x0;  // 当前模式寄存器
-        self.guest_system_regs.prmd = 0x0;  // 前一个模式寄存器
-        self.guest_system_regs.euen = 0x0;  // 扩展单元使能寄存器
+        self.guest_system_regs.crmd = 0x0; // 当前模式寄存器
+        self.guest_system_regs.prmd = 0x0; // 前一个模式寄存器
+        self.guest_system_regs.euen = 0x0; // 扩展单元使能寄存器
         self.guest_system_regs.estat = 0x0; // 异常状态寄存器
-        
+
         // 处理透传配置
         if config.passthrough_interrupt {
             // TODO: 实现中断透传逻辑
@@ -186,10 +186,10 @@ impl<H: AxVCpuHal> LoongArch64VCpu<H> {
             // PWCL (Page Walk Control Low) - 页表遍历控制低32位
             // 设置4级页表的各级基址和宽度
             core::arch::asm!("csrwr {}, 0x1c", in(reg) 0x1c1c1c1c); // PWCL
-            
+
             // PWCH (Page Walk Control High) - 页表遍历控制高32位
             core::arch::asm!("csrwr {}, 0x1d", in(reg) 0x1c1c1c1c); // PWCH
-            
+
             // STLBPS (Shared TLB Page Size) - 共享TLB页大小
             core::arch::asm!("csrwr {}, 0x1e", in(reg) 0x0c); // 4KB页大小 (log2(4096) = 12)
         }
@@ -240,10 +240,10 @@ impl<H: AxVCpuHal> LoongArch64VCpu<H> {
     /// Restores guest system control registers.
     unsafe fn restore_vm_system_regs(&mut self) {
         unsafe {
-            // TODO: 恢复虚拟机系统寄存器            
+            // TODO: 恢复虚拟机系统寄存器
             self.guest_system_regs.restore();
-            
-            // TODO: 刷新TLB和缓存            
+
+            // TODO: 刷新TLB和缓存
         }
     }
 
@@ -317,8 +317,8 @@ impl<H: AxVCpuHal> LoongArch64VCpu<H> {
         value: u64,
         reg: usize,
     ) -> AxResult<Option<AxVCpuExitReason>> {
-        // TODO: 实现龙芯架构的系统寄存器访问处理        
-        
+        // TODO: 实现龙芯架构的系统寄存器访问处理
+
         Ok(None)
     }
 }

@@ -53,9 +53,9 @@ impl Default for LoongArch64ContextFrame {
     fn default() -> Self {
         LoongArch64ContextFrame {
             gpr: [0; 32],
-            crmd: 0, // TODO: 设置默认的CRMD值
-            prmd: 0, // TODO: 设置默认的PRMD值
-            euen: 0, // TODO: 设置默认的EUEN值
+            crmd: 0,  // TODO: 设置默认的CRMD值
+            prmd: 0,  // TODO: 设置默认的PRMD值
+            euen: 0,  // TODO: 设置默认的EUEN值
             estat: 0, // TODO: 设置默认的ESTAT值
             era: 0,
             sp: 0,
@@ -217,15 +217,15 @@ pub struct GuestSystemRegisters {
     pub gcsr_dmw3: usize, // DMW3 - 数据内存窗口3
 
     // 为了兼容性保留的简化字段名
-    pub pgdl: usize, // 页表根地址低32位 (兼容性字段)
-    pub pgdh: usize, // 页表根地址高32位 (兼容性字段)
-    pub asid: usize, // 地址空间ID (兼容性字段)
-    pub tcfg: usize, // 定时器配置 (兼容性字段)
-    pub tval: usize, // 定时器值 (兼容性字段)
-    pub cntc: usize, // 计数器值 (兼容性字段)
-    pub crmd: usize, // 当前模式寄存器 (兼容性字段)
-    pub prmd: usize, // 前一个模式寄存器 (兼容性字段)
-    pub euen: usize, // 扩展单元使能寄存器 (兼容性字段)
+    pub pgdl: usize,  // 页表根地址低32位 (兼容性字段)
+    pub pgdh: usize,  // 页表根地址高32位 (兼容性字段)
+    pub asid: usize,  // 地址空间ID (兼容性字段)
+    pub tcfg: usize,  // 定时器配置 (兼容性字段)
+    pub tval: usize,  // 定时器值 (兼容性字段)
+    pub cntc: usize,  // 计数器值 (兼容性字段)
+    pub crmd: usize,  // 当前模式寄存器 (兼容性字段)
+    pub prmd: usize,  // 前一个模式寄存器 (兼容性字段)
+    pub euen: usize,  // 扩展单元使能寄存器 (兼容性字段)
     pub estat: usize, // 异常状态寄存器 (兼容性字段)
 }
 
@@ -234,22 +234,22 @@ impl GuestSystemRegisters {
     pub fn store(&mut self) {
         unsafe {
             // hvisor/src/arch/loongarch64/trap.rs
-            
+
             // 页表相关寄存器
-            core::arch::asm!("gcsrrd {}, 0x19", out(reg) self.pgdl); // PGDL
-            core::arch::asm!("gcsrrd {}, 0x1a", out(reg) self.pgdh); // PGDH
-            core::arch::asm!("gcsrrd {}, 0x18", out(reg) self.asid); // ASID
-            
+            asm!("gcsrrd {}, 0x19", out(reg) self.pgdl); // PGDL
+            asm!("gcsrrd {}, 0x1a", out(reg) self.pgdh); // PGDH
+            asm!("gcsrrd {}, 0x18", out(reg) self.asid); // ASID
+
             // 定时器相关寄存器
-            core::arch::asm!("gcsrrd {}, 0x41", out(reg) self.tcfg); // TCFG
-            core::arch::asm!("gcsrrd {}, 0x42", out(reg) self.tval); // TVAL
-            core::arch::asm!("gcsrrd {}, 0x43", out(reg) self.cntc); // CNTC
-            
+            asm!("gcsrrd {}, 0x41", out(reg) self.tcfg); // TCFG
+            asm!("gcsrrd {}, 0x42", out(reg) self.tval); // TVAL
+            asm!("gcsrrd {}, 0x43", out(reg) self.cntc); // CNTC
+
             // 其他系统寄存器
-            core::arch::asm!("gcsrrd {}, 0x0", out(reg) self.crmd);  // CRMD
-            core::arch::asm!("gcsrrd {}, 0x1", out(reg) self.prmd);  // PRMD
-            core::arch::asm!("gcsrrd {}, 0x2", out(reg) self.euen);  // EUEN
-            core::arch::asm!("gcsrrd {}, 0x5", out(reg) self.estat); // ESTAT
+            asm!("gcsrrd {}, 0x0", out(reg) self.crmd); // CRMD
+            asm!("gcsrrd {}, 0x1", out(reg) self.prmd); // PRMD
+            asm!("gcsrrd {}, 0x2", out(reg) self.euen); // EUEN
+            asm!("gcsrrd {}, 0x5", out(reg) self.estat); // ESTAT
         }
     }
 
@@ -257,21 +257,21 @@ impl GuestSystemRegisters {
     pub fn restore(&self) {
         unsafe {
             // hvisor/src/arch/loongarch64/trap.rs
-            
+
             // 恢复页表相关寄存器
             core::arch::asm!("gcsrwr {}, 0x19", in(reg) self.pgdl); // PGDL
             core::arch::asm!("gcsrwr {}, 0x1a", in(reg) self.pgdh); // PGDH
             core::arch::asm!("gcsrwr {}, 0x18", in(reg) self.asid); // ASID
-            
+
             // 恢复定时器相关寄存器
             core::arch::asm!("gcsrwr {}, 0x41", in(reg) self.tcfg); // TCFG
             core::arch::asm!("gcsrwr {}, 0x42", in(reg) self.tval); // TVAL
             core::arch::asm!("gcsrwr {}, 0x43", in(reg) self.cntc); // CNTC
-            
+
             // 恢复其他系统寄存器
-            core::arch::asm!("gcsrwr {}, 0x0", in(reg) self.crmd);  // CRMD
-            core::arch::asm!("gcsrwr {}, 0x1", in(reg) self.prmd);  // PRMD
-            core::arch::asm!("gcsrwr {}, 0x2", in(reg) self.euen);  // EUEN
+            core::arch::asm!("gcsrwr {}, 0x0", in(reg) self.crmd); // CRMD
+            core::arch::asm!("gcsrwr {}, 0x1", in(reg) self.prmd); // PRMD
+            core::arch::asm!("gcsrwr {}, 0x2", in(reg) self.euen); // EUEN
             core::arch::asm!("gcsrwr {}, 0x5", in(reg) self.estat); // ESTAT
         }
     }
