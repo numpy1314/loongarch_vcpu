@@ -22,6 +22,10 @@ tock-registers = "0.9"
 axerrno = "0.1.0"
 percpu = {version = "0.2.0"}
 
+loongArch64 = "0.2.5"
+bitflags = "2.1"
+bit_field = "0.10"
+
 # axaddrspace = {git = "https://github.com/manchangfengxu/axaddrspace.git"}
 axaddrspace = {path = "../axaddrspace"}
 axdevice_base = {git = "https://github.com/arceos-hypervisor/axdevice_crates.git"}

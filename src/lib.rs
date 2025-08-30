@@ -12,7 +12,7 @@ mod exception;
 mod pcpu;
 // mod smc;
 mod vcpu;
-
+mod register;
 /// context frame for loongarch64
 pub type TrapFrame = context_frame::LoongArch64ContextFrame;
 
