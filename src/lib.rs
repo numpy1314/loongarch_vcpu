@@ -16,6 +16,8 @@
 #![feature(doc_cfg)]
 #![cfg(target_arch = "loongarch64")]
 #![doc = include_str!("../README.md")]
+// Allow unsafe operations in unsafe functions (Rust 2024 edition compatibility)
+#![allow(unsafe_op_in_unsafe_fn)]
 
 #[macro_use]
 extern crate log;
@@ -23,16 +25,18 @@ extern crate log;
 mod context_frame;
 mod exception;
 mod pcpu;
+mod registers;
 mod vcpu;
 
 pub use self::pcpu::LoongArchPerCpu;
+pub use self::registers::*;
 pub use self::vcpu::{LoongArchVCpu, LoongArchVCpuCreateConfig};
 
 /// Return if current platform support virtualization extension.
 pub fn has_hardware_support() -> bool {
     let cpucfg2: u64;
     unsafe {
-        core::arch::asm!("cpucfg {0:r}, {1:r}", out(reg) cpucfg2, in(reg) 2);
+        core::arch::asm!("cpucfg {}, {}", out(reg) cpucfg2, in(reg) 2);
     }
     (cpucfg2 & (1 << 10)) != 0
 }

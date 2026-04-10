@@ -20,7 +20,7 @@ use crate::context_frame::{LoongArchContextFrame, LoongArchGuestSystemRegisters}
 use crate::exception::{TrapKind, handle_exception_sync, handle_exception_irq};
 
 // External assembly functions
-extern "C" {
+unsafe extern "C" {
     fn _run_guest(ctx: *mut LoongArchContextFrame) -> !;
     fn _guest_exit();
 }
@@ -32,7 +32,7 @@ static HOST_SP: usize = 0;
 unsafe fn save_host_sp() {
     let sp: usize;
     unsafe {
-        core::arch::asm!("move {0}, sp", out(reg) sp);
+        core::arch::asm!("move {0}, $sp", out(reg) sp);
         HOST_SP.write_current_raw(sp);
     }
 }
@@ -41,7 +41,7 @@ unsafe fn save_host_sp() {
 unsafe fn restore_host_sp() {
     let sp = unsafe { HOST_SP.read_current_raw() };
     unsafe {
-        core::arch::asm!("move sp, {0}", in(reg) sp);
+        core::arch::asm!("move $sp, {0}", in(reg) sp);
     }
 }
 
@@ -151,7 +151,9 @@ impl axvcpu::AxArchVCpu for LoongArchVCpu {
     }
 
     fn inject_interrupt(&mut self, vector: usize) -> AxResult {
-        axvisor_api::arch::hardware_inject_virtual_interrupt(vector as u8);
+        // TODO: Implement interrupt injection for LoongArch
+        // hardware_inject_virtual_interrupt is not available in axvisor_api for LoongArch
+        debug!("Inject interrupt: vector={}", vector);
         Ok(())
     }
 
@@ -172,23 +174,49 @@ impl LoongArchVCpu {
 
     /// Init guest context. Also set some CSR register values.
     fn init_vm_context(&mut self, config: LoongArchVCpuSetupConfig) {
-        // Initialize guest system registers
-        // TODO: Set appropriate initial values for GSTAT, GCTL, etc.
+        use crate::registers::*;
+
+        // Initialize guest CRMD (Current Mode Register) in context frame
+        // CRMD bits: [1:0] = PLV (Privilege Level), [2] = IE (Interrupt Enable)
+        // PLV=0: kernel mode (most privileged), PLV=3: user mode
+        // For guest kernel, we set PLV=1 (guest kernel mode), IE=1 (interrupts enabled)
+        // 0x5 = 0b101 = PLV=1, IE=1
+        self.ctx.crmd = 0x5; // PLV=1 (guest kernel mode), IE=1
+
+        // Initialize guest PRMD (Previous Mode Register) in context frame
+        // Used to save CRMD on exception entry
+        self.ctx.prmd = 0;
+
+        // Initialize guest ESTAT (Exception Status) in context frame
+        // Clear all exception status bits
+        self.ctx.estat = 0;
+
+        // Note: GSTAT.GID for this VM is set by hypervisor core during VM creation
+        // GID is used for TLB isolation between different VMs
+        // GID=0 is reserved for hypervisor, GID>=1 for guests
 
         if config.passthrough_timer {
             // Enable guest timer
-            // self.guest_system_regs.gtcfg |= ...;
+            // Set TCFG.EN=1 and configure timer period
+            self.guest_system_regs.gtcfg = 0x1; // Enable timer
         }
 
         if config.passthrough_interrupt {
-            // Configure interrupt passthrough
-            // TODO: Set appropriate bits in GSTAT or other CSRs
+            // Configure interrupt passthrough in GINTC
+            // Allow hardware interrupts to be delivered directly to guest
+            // This would be done through GINTC CSR
         }
 
-        // Set initial guest page table (empty for now)
-        self.guest_system_regs.gpgd = 0;
+        // Note: Guest page table root (gpgd) is set by set_ept_root() after setup()
+        // Do NOT clear gpgd here - it would overwrite the EPT root set by the VMM.
+        // Only initialize the low/high page table base registers if needed.
         self.guest_system_regs.gpgdl = 0;
         self.guest_system_regs.gpgdh = 0;
+
+        // Set guest exception entry point
+        // GCSR_EENTRY should point to guest's exception vector base
+        // This is typically set by the guest kernel
+        self.guest_system_regs.geentry = 0;
     }
 
     /// Set exception return pc (SEPC)
@@ -214,29 +242,31 @@ impl LoongArchVCpu {
     unsafe extern "C" fn run_guest(&mut self) -> usize {
         core::arch::naked_asm!(
             // Save host registers (callee-saved)
-            // LoongArch calling convention: s0-s9 (x22-x31) are callee-saved
-            // Also save ra (x1) which contains return address to run() method
-            "addi.d sp, sp, -14 * 8",
-            "st.d x1, sp, 0",      // Save ra (return address)
-            "st.d x21, sp, 8",     // Save s0/fp (will store context frame pointer)
-            "st.d x22, sp, 16",
-            "st.d x23, sp, 24",
-            "st.d x24, sp, 32",
-            "st.d x25, sp, 40",
-            "st.d x26, sp, 48",
-            "st.d x27, sp, 56",
-            "st.d x28, sp, 64",
-            "st.d x29, sp, 72",
-            "st.d x30, sp, 80",
-            "st.d x31, sp, 88",
+            // LoongArch calling convention: s0-s8 ($r23-$r31) are callee-saved
+            // Also save ra ($r1) which contains return address to run() method.
+            // Save $r21 as well because percpu uses it as the host CPU-local base.
+            "addi.d $sp, $sp, -14 * 8",
+            "st.d $ra, $sp, 0",      // Save ra (return address)
+            "st.d $s0, $sp, 8",      // Save s0 (will store context frame pointer)
+            "st.d $s1, $sp, 16",
+            "st.d $s2, $sp, 24",
+            "st.d $s3, $sp, 32",
+            "st.d $s4, $sp, 40",
+            "st.d $s5, $sp, 48",
+            "st.d $s6, $sp, 56",
+            "st.d $s7, $sp, 64",
+            "st.d $s8, $sp, 72",
+            "st.d $fp, $sp, 80",
+            "st.d $tp, $sp, 88",
+            "st.d $r21, $sp, 96",
             // Save current host stack top to self.host_stack_top
-            // self pointer is in a0 (first argument)
+            // self pointer is $a0 (first argument)
             // host_stack_top offset = size_of::<LoongArchContextFrame>()
-            "move x9, sp",
-            "addi.d x10, a0, {host_stack_top_offset}",
-            "st.d x9, x10, 0",
+            "move $t0, $sp",
+            "addi.d $t1, $a0, {host_stack_top_offset}",
+            "st.d $t0, $t1, 0",
             // Go to _run_guest assembly function
-            // a0 already points to self, need to pass pointer to ctx (same as a0)
+            // $a0 already points to self, need to pass pointer to ctx (same as $a0)
             "bl {run_guest_asm}",
             // Panic if control returns here (should never happen)
             "bl {run_guest_panic}",

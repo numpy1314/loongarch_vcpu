@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use core::mem;
 use axerrno::AxResult;
 use axvcpu::AxArchPerCpu;
 
+use crate::registers::*;
+
 // External symbol for exception vectors defined in exception.S
-extern "C" {
+unsafe extern "C" {
     static _exception_vectors: u8;
 }
 
@@ -32,56 +33,8 @@ pub struct LoongArchPerCpu {
     pub original_eentry: usize,
     /// Original value of GSTAT (Guest Status) CSR
     pub original_gstat: usize,
-    /// Original value of GEENTRY (Guest Exception Entry) CSR
-    pub original_geentry: usize,
-}
-
-/// Get GSTAT (Guest Status) CSR value
-fn read_gstat() -> usize {
-    let gstat: usize;
-    unsafe {
-        core::arch::asm!("csrrd {}, 0x180", out(reg) gstat);
-    }
-    gstat
-}
-
-/// Write GSTAT (Guest Status) CSR
-fn write_gstat(value: usize) {
-    unsafe {
-        core::arch::asm!("csrwr {}, 0x180", in(reg) value);
-    }
-}
-
-/// Get GCTL (Guest Control) CSR value
-fn read_gctl() -> usize {
-    let gctl: usize;
-    unsafe {
-        core::arch::asm!("csrrd {}, 0x181", out(reg) gctl);
-    }
-    gctl
-}
-
-/// Write GCTL (Guest Control) CSR
-fn write_gctl(value: usize) {
-    unsafe {
-        core::arch::asm!("csrwr {}, 0x181", in(reg) value);
-    }
-}
-
-/// Get GEENTRY (Guest Exception Entry) CSR value
-fn read_geentry() -> usize {
-    let geentry: usize;
-    unsafe {
-        core::arch::asm!("csrrd {}, 0x182", out(reg) geentry);
-    }
-    geentry
-}
-
-/// Write GEENTRY (Guest Exception Entry) CSR
-fn write_geentry(value: usize) {
-    unsafe {
-        core::arch::asm!("csrwr {}, 0x182", in(reg) value);
-    }
+    /// Original value of GCSR_EENTRY (Guest Exception Entry)
+    pub original_gcsr_eentry: usize,
 }
 
 impl AxArchPerCpu for LoongArchPerCpu {
@@ -90,62 +43,58 @@ impl AxArchPerCpu for LoongArchPerCpu {
             cpu_id,
             original_eentry: 0,
             original_gstat: 0,
-            original_geentry: 0,
+            original_gcsr_eentry: 0,
         })
     }
 
     fn is_enabled(&self) -> bool {
         // Check if virtualization is enabled by examining GSTAT.GVM
         // GSTAT[0] is GVM (Guest Virtualization Mode) bit
-        let gstat = read_gstat();
-        (gstat & 0x1) != 0
+        is_guest_mode_enabled()
     }
 
     fn hardware_enable(&mut self) -> AxResult {
         // Save original exception entry (EENTRY) CSR
         // EENTRY is CSR 0xC (Exception Entry Base Address)
-        let eentry: usize;
-        unsafe {
-            core::arch::asm!("csrrd {}, 0xC", out(reg) eentry);
-        }
-        self.original_eentry = eentry;
+        self.original_eentry = unsafe { csr_read::<CSR_EENTRY>() };
 
         // Save original GSTAT
-        self.original_gstat = read_gstat();
+        self.original_gstat = gstat_read();
 
-        // Save original GEENTRY
-        self.original_geentry = read_geentry();
+        // Save original GCSR_EENTRY
+        self.original_gcsr_eentry = gcsr_eentry_read();
 
         // Enable guest virtualization mode by setting GSTAT.GVM = 1
         // According to LoongArch Virtualization specification:
-        // - Set GSTAT[0] = 1 to enable guest mode
-        // - Set GCTL[0] = 1 to enable guest timer
-        let mut gstat = read_gstat();
-        gstat |= 0x1; // Set GVM bit
-        write_gstat(gstat);
+        // - Set GSTAT.GVM = 1 to enable guest mode
+        unsafe {
+            enable_guest_mode();
+        }
 
-        let mut gctl = read_gctl();
-        gctl |= 0x1; // Enable guest timer
-        write_gctl(gctl);
-
-        // Set GEENTRY to guest exception entry point (_exception_vectors)
+        // Set GCSR_EENTRY to guest exception entry point (_exception_vectors)
         let geentry_addr = unsafe { &_exception_vectors as *const u8 as usize };
-        write_geentry(geentry_addr);
+        unsafe {
+            gcsr_eentry_write(geentry_addr);
+        }
 
-        debug!("LoongArch virtualization enabled for CPU {}, GEENTRY={:#x}", self.cpu_id, geentry_addr);
+        debug!("LoongArch virtualization enabled for CPU {}, GCSR_EENTRY={:#x}", self.cpu_id, geentry_addr);
         Ok(())
     }
 
     fn hardware_disable(&mut self) -> AxResult {
         // Restore original GSTAT
-        write_gstat(self.original_gstat);
+        unsafe {
+            gstat_write(self.original_gstat);
+        }
 
-        // Restore original GEENTRY
-        write_geentry(self.original_geentry);
+        // Restore original GCSR_EENTRY
+        unsafe {
+            gcsr_eentry_write(self.original_gcsr_eentry);
+        }
 
         // Restore original EENTRY
         unsafe {
-            core::arch::asm!("csrwr {}, 0xC", in(reg) self.original_eentry);
+            csr_write::<CSR_EENTRY>(self.original_eentry);
         }
 
         debug!("LoongArch virtualization disabled for CPU {}", self.cpu_id);

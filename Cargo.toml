@@ -19,10 +19,10 @@ spin = "0.10"
 numeric-enum-macro = "0.2"
 tock-registers = "0.9"
 
-axerrno = "0.1.0"
-percpu = {version = "0.2.0"}
+axerrno = "0.2"
+percpu = "0.2.3-preview.1"
 
-axaddrspace = {git = "https://github.com/arceos-hypervisor/axaddrspace.git"}
-axdevice_base = {git = "https://github.com/arceos-hypervisor/axdevice_crates.git"}
-axvcpu = {git = "https://github.com/arceos-hypervisor/axvcpu.git"}
-axvisor_api = {git = "https://github.com/arceos-hypervisor/axvisor_api.git"}
+axaddrspace = "0.3"
+axdevice_base = "0.2.2"
+axvcpu = "0.3"
+axvisor_api = "0.3"

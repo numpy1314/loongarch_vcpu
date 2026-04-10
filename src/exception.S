@@ -74,14 +74,15 @@
     st.d    $r30, $sp, 240
     st.d    $r31, $sp, 248
 
-    // Save CSR registers
-    csrrd   $t0, 0x6      // ERA (Exception Return Address, same as sepc)
+    // Save GCSR (Guest CSR) registers using gcsrrd instruction
+    // These are the guest's CSR values, not host's
+    gcsrrd  $t0, 0x6      // GCSR_ERA (Guest Exception Return Address, same as sepc)
     st.d    $t0, $sp, 256  // sepc field
-    csrrd   $t0, 0x0      // CRMD
+    gcsrrd  $t0, 0x0      // GCSR_CRMD (Guest Current Mode)
     st.d    $t0, $sp, 264  // crmd field
-    csrrd   $t0, 0x1      // PRMD
+    gcsrrd  $t0, 0x1      // GCSR_PRMD (Guest Previous Mode)
     st.d    $t0, $sp, 272  // prmd field
-    csrrd   $t0, 0x5      // ESTAT
+    gcsrrd  $t0, 0x5      // GCSR_ESTAT (Guest Exception Status)
     st.d    $t0, $sp, 280  // estat field
 .endm
 
@@ -97,15 +98,15 @@
  *   - sp unchanged
  */
 .macro RESTORE_GUEST_REGS
-    // Restore CSR registers (except ERA which will be restored later)
-    ld.d    $t0, $sp, 256  // ERA (sepc)
-    csrwr   $t0, 0x6
-    ld.d    $t0, $sp, 264  // CRMD
-    csrwr   $t0, 0x0
-    ld.d    $t0, $sp, 272  // PRMD
-    csrwr   $t0, 0x1
-    ld.d    $t0, $sp, 280  // ESTAT
-    csrwr   $t0, 0x5
+    // Restore GCSR (Guest CSR) registers using gcsrwr instruction
+    ld.d    $t0, $sp, 256  // GCSR_ERA (sepc)
+    gcsrwr  $t0, 0x6
+    ld.d    $t0, $sp, 264  // GCSR_CRMD
+    gcsrwr  $t0, 0x0
+    ld.d    $t0, $sp, 272  // GCSR_PRMD
+    gcsrwr  $t0, 0x1
+    ld.d    $t0, $sp, 280  // GCSR_ESTAT
+    gcsrwr  $t0, 0x5
 
     // Restore general purpose registers x1-x31
     // Note: x0 is zero register, skip it
@@ -162,10 +163,12 @@ _run_guest:
     // Save return address (ra) temporarily
     move    $t1, $ra
 
+    // Keep the guest context pointer in host SAVE3 so vmexit vectors can
+    // recover it without stealing the host percpu register `$r21`.
+    csrwr   $a0, 0x33
+
     // Set sp to point to context frame
     move    $sp, $a0
-    // Save context frame pointer in x21 (s0/fp) for exception vectors
-    move    $r21, $a0
 
     // Restore guest registers from context frame
     RESTORE_GUEST_REGS
@@ -180,19 +183,16 @@ _run_guest:
 /*
  * Guest exit handler - called from exception vector
  *
- * This function:
- * 1. Saves guest context to LoongArchContextFrame
- * 2. Jumps to Rust vmexit_trampoline with exit reason in a0
- * 3. vmexit_trampoline restores host context and returns to hypervisor
+ * DEPRECATED: Exception vectors now directly jump to vmexit_trampoline
+ * after saving context and setting a0. This function is kept for
+ * compatibility but should not be used.
  */
 .global _guest_exit
 _guest_exit:
     // sp points to LoongArchContextFrame (set by exception vector)
-    // Save guest registers to context frame
-    SAVE_GUEST_REGS
-
-    // a0 already contains exit reason (set by exception vector)
-    // Jump to vmexit_trampoline (not call, as it will restore ra and return directly)
+    // Context is already saved by exception vector
+    // a0 should already contain exit reason (set by exception vector)
+    // Jump to vmexit_trampoline
     b       vmexit_trampoline
 
 /*
@@ -312,13 +312,13 @@ _exception_vectors:
  * IRQ handler vector
  */
 _irq_handler_vector:
-    // Set sp to point to context frame (stored in x21/s0/fp)
-    move    $sp, $r21
+    // Recover the context frame pointer saved by `_run_guest`.
+    csrrd   $sp, 0x33
 
-    // Save guest context
+    // Save guest context (including original a0)
     SAVE_GUEST_REGS
 
-    // Set exit reason to Irq (1)
+    // Set exit reason to Irq (1) in a0 for Rust handler
     li.d    $a0, 1  // TrapKind::Irq
 
     // Jump to common exit handler
@@ -328,8 +328,8 @@ _irq_handler_vector:
  * Synchronous exception handler vector (for most exceptions)
  */
 _sync_handler_vector:
-    // Set sp to point to context frame (stored in x21/s0/fp)
-    move    $sp, $r21
+    // Recover the context frame pointer saved by `_run_guest`.
+    csrrd   $sp, 0x33
 
     // Save guest context
     SAVE_GUEST_REGS
@@ -344,8 +344,8 @@ _sync_handler_vector:
  * HVC handler vector (special handling for hypercalls)
  */
 _hvc_handler_vector:
-    // Set sp to point to context frame (stored in x21/s0/fp)
-    move    $sp, $r21
+    // Recover the context frame pointer saved by `_run_guest`.
+    csrrd   $sp, 0x33
 
     // Save guest context
     SAVE_GUEST_REGS

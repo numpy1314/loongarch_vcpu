@@ -332,92 +332,93 @@ impl LoongArchGuestSystemRegisters {
         *self = LoongArchGuestSystemRegisters::default()
     }
 
-    /// Stores the current values of all relevant guest CSR registers into the `LoongArchGuestSystemRegisters` structure.
+    /// Stores the current values of all relevant guest GCSR registers.
     ///
-    /// This method uses inline assembly to read the values of various guest CSR registers
-    /// and stores them in the corresponding fields of the `LoongArchGuestSystemRegisters` structure.
+    /// This method uses `gcsrrd` instruction to read GCSR values.
+    /// GCSRs are Guest Control and Status Registers, accessed via gcsrrd/gcsrwr instructions.
     ///
-    /// According to LoongArch Virtualization specification, the guest CSRs are:
-    /// - GPGD (Guest Page Global Directory): CSR 0x1A0
-    /// - GPGDL (Guest PGD Low): CSR 0x1A1
-    /// - GPGDH (Guest PGD High): CSR 0x1A2
-    /// - GASID (Guest ASID): CSR 0x1A3
-    /// - GTCFG (Guest Timer Config): CSR 0x1A4
-    /// - GTVAL (Guest Timer Value): CSR 0x1A5
-    /// - GTICLR (Guest Timer Clear): CSR 0x1A6
-    /// - GTLBEHI (Guest TLB Entry High): CSR 0x1A7
-    /// - GTLBELO0 (Guest TLB Entry Low 0): CSR 0x1A8
-    /// - GTLBELO1 (Guest TLB Entry Low 1): CSR 0x1A9
-    /// - GTLBIDX (Guest TLB Index): CSR 0x1AA
-    /// - GSTAT (Guest Status): CSR 0x180
-    /// - GCTL (Guest Control): CSR 0x181
-    /// - GEENTRY (Guest Exception Entry): CSR 0x182
-    /// - GERA (Guest Exception Return Address): CSR 0x183
-    /// - GBADV (Guest Bad Virtual Address): CSR 0x184
-    /// - GBADI (Guest Bad Instruction): CSR 0x185
+    /// GCSR offsets (from LoongArch Virtualization spec):
+    /// - GCSR_PGD (0x1B): Guest Page Global Directory
+    /// - GCSR_PGDL (0x19): Guest PGD Low
+    /// - GCSR_PGDH (0x1A): Guest PGD High
+    /// - GCSR_ASID (0x18): Guest ASID
+    /// - GCSR_TCFG (0x41): Guest Timer Config
+    /// - GCSR_TVAL (0x42): Guest Timer Value
+    /// - GCSR_TICLR (0x44): Guest Timer Clear
+    /// - GCSR_TLBEHI (0x11): Guest TLB Entry High
+    /// - GCSR_TLBELO0 (0x12): Guest TLB Entry Low 0
+    /// - GCSR_TLBELO1 (0x13): Guest TLB Entry Low 1
+    /// - GCSR_TLBIDX (0x10): Guest TLB Index
+    /// - GCSR_ESTAT (0x5): Guest Exception Status
+    /// - GCSR_ERA (0x6): Guest Exception Return Address
+    /// - GCSR_EENTRY (0xC): Guest Exception Entry
+    /// - GCSR_BADV (0x7): Guest Bad Virtual Address
+    /// - GCSR_BADI (0x8): Guest Bad Instruction
     pub unsafe fn store(&mut self) {
+        use crate::registers::*;
         unsafe {
-            // Guest page table CSRs
-            core::arch::asm!("csrrd {0}, 0x1A0", out(reg) self.gpgd);
-            core::arch::asm!("csrrd {0}, 0x1A1", out(reg) self.gpgdl);
-            core::arch::asm!("csrrd {0}, 0x1A2", out(reg) self.gpgdh);
-            core::arch::asm!("csrrd {0}, 0x1A3", out(reg) self.gasid);
+            // Guest page table GCSRs
+            self.gpgd = gcsr_read::<GCSR_PGD>();
+            self.gpgdl = gcsr_read::<GCSR_PGDL>();
+            self.gpgdh = gcsr_read::<GCSR_PGDH>();
+            self.gasid = gcsr_read::<GCSR_ASID>();
 
-            // Guest timer CSRs
-            core::arch::asm!("csrrd {0}, 0x1A4", out(reg) self.gtcfg);
-            core::arch::asm!("csrrd {0}, 0x1A5", out(reg) self.gtval);
-            core::arch::asm!("csrrd {0}, 0x1A6", out(reg) self.gticlr);
+            // Guest timer GCSRs
+            self.gtcfg = gcsr_read::<GCSR_TCFG>();
+            self.gtval = gcsr_read::<GCSR_TVAL>();
+            self.gticlr = gcsr_read::<GCSR_TICLR>();
 
-            // Guest TLB CSRs
-            core::arch::asm!("csrrd {0}, 0x1A7", out(reg) self.gtlbehi);
-            core::arch::asm!("csrrd {0}, 0x1A8", out(reg) self.gtlbello0);
-            core::arch::asm!("csrrd {0}, 0x1A9", out(reg) self.gtlbello1);
-            core::arch::asm!("csrrd {0}, 0x1AA", out(reg) self.gtlbidx);
+            // Guest TLB GCSRs
+            self.gtlbehi = gcsr_read::<GCSR_TLBEHI>();
+            self.gtlbello0 = gcsr_read::<GCSR_TLBELO0>();
+            self.gtlbello1 = gcsr_read::<GCSR_TLBELO1>();
+            self.gtlbidx = gcsr_read::<GCSR_TLBIDX>();
 
-            // Guest control/status CSRs
-            core::arch::asm!("csrrd {0}, 0x180", out(reg) self.gstat);
-            core::arch::asm!("csrrd {0}, 0x181", out(reg) self.gctl);
-            core::arch::asm!("csrrd {0}, 0x182", out(reg) self.geentry);
-            core::arch::asm!("csrrd {0}, 0x183", out(reg) self.gera);
-            core::arch::asm!("csrrd {0}, 0x184", out(reg) self.gbadv);
-            core::arch::asm!("csrrd {0}, 0x185", out(reg) self.gbadi);
+            // Guest control/status GCSRs
+            // Note: GSTAT is a regular CSR (0x50), not a GCSR
+            // It contains GVM (Guest Virtualization Mode) and GID (Guest ID) fields
+            self.gstat = crate::registers::gstat_read();
+            self.gera = gcsr_read::<GCSR_ERA>();
+            self.geentry = gcsr_read::<GCSR_EENTRY>();
+            self.gbadv = gcsr_read::<GCSR_BADV>();
+            self.gbadi = gcsr_read::<GCSR_BADI>();
+
+            // Note: GCTL is a regular CSR (0x51), not a GCSR
+            self.gctl = crate::registers::csr_read::<{ crate::registers::CSR_GCTL }>();
         }
     }
 
-    /// Restores the values of all relevant guest CSR registers from the `LoongArchGuestSystemRegisters` structure.
+    /// Restores the values of all relevant guest GCSR registers.
     ///
-    /// This method uses inline assembly to write the values stored in the `LoongArchGuestSystemRegisters` structure
-    /// back to the guest CSR registers. This is essential for restoring the state of a virtual machine
-    /// during context switching.
-    ///
-    /// Each guest CSR register is restored with its corresponding value from the `LoongArchGuestSystemRegisters`,
-    /// ensuring that the virtual machine resumes execution with the correct context.
+    /// This method uses `gcsrwr` instruction to write GCSR values.
     pub unsafe fn restore(&self) {
+        use crate::registers::*;
         unsafe {
-            // Guest page table CSRs
-            core::arch::asm!("csrwr {0}, 0x1A0", in(reg) self.gpgd);
-            core::arch::asm!("csrwr {0}, 0x1A1", in(reg) self.gpgdl);
-            core::arch::asm!("csrwr {0}, 0x1A2", in(reg) self.gpgdh);
-            core::arch::asm!("csrwr {0}, 0x1A3", in(reg) self.gasid);
+            // Guest page table GCSRs
+            gcsr_write::<GCSR_PGD>(self.gpgd);
+            gcsr_write::<GCSR_PGDL>(self.gpgdl);
+            gcsr_write::<GCSR_PGDH>(self.gpgdh);
+            gcsr_write::<GCSR_ASID>(self.gasid);
 
-            // Guest timer CSRs
-            core::arch::asm!("csrwr {0}, 0x1A4", in(reg) self.gtcfg);
-            core::arch::asm!("csrwr {0}, 0x1A5", in(reg) self.gtval);
-            core::arch::asm!("csrwr {0}, 0x1A6", in(reg) self.gticlr);
+            // Guest timer GCSRs
+            gcsr_write::<GCSR_TCFG>(self.gtcfg);
+            gcsr_write::<GCSR_TVAL>(self.gtval);
+            gcsr_write::<GCSR_TICLR>(self.gticlr);
 
-            // Guest TLB CSRs
-            core::arch::asm!("csrwr {0}, 0x1A7", in(reg) self.gtlbehi);
-            core::arch::asm!("csrwr {0}, 0x1A8", in(reg) self.gtlbello0);
-            core::arch::asm!("csrwr {0}, 0x1A9", in(reg) self.gtlbello1);
-            core::arch::asm!("csrwr {0}, 0x1AA", in(reg) self.gtlbidx);
+            // Guest TLB GCSRs
+            gcsr_write::<GCSR_TLBEHI>(self.gtlbehi);
+            gcsr_write::<GCSR_TLBELO0>(self.gtlbello0);
+            gcsr_write::<GCSR_TLBELO1>(self.gtlbello1);
+            gcsr_write::<GCSR_TLBIDX>(self.gtlbidx);
 
-            // Guest control/status CSRs
-            core::arch::asm!("csrwr {0}, 0x180", in(reg) self.gstat);
-            core::arch::asm!("csrwr {0}, 0x181", in(reg) self.gctl);
-            core::arch::asm!("csrwr {0}, 0x182", in(reg) self.geentry);
-            core::arch::asm!("csrwr {0}, 0x183", in(reg) self.gera);
-            core::arch::asm!("csrwr {0}, 0x184", in(reg) self.gbadv);
-            core::arch::asm!("csrwr {0}, 0x185", in(reg) self.gbadi);
+            // Guest control/status GCSRs
+            // Note: We intentionally don't restore gstat here as it's handled separately
+            gcsr_write::<GCSR_ERA>(self.gera);
+            gcsr_write::<GCSR_EENTRY>(self.geentry);
+            // Note: GBADV and GBADI are read-only, so we don't restore them
+
+            // Restore GCTL (Guest Control Register) - regular CSR, not GCSR
+            csr_write::<CSR_GCTL>(self.gctl);
         }
     }
 }

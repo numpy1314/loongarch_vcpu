@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::context_frame::LoongArchContextFrame;
+use axaddrspace::GuestPhysAddr;
 use axerrno::{AxError, AxResult};
 use axvcpu::AxVCpuExitReason;
 
@@ -51,47 +52,47 @@ pub enum TrapKind {
     // LoongArch may have other trap types, add as needed
 }
 
+impl From<u8> for TrapKind {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => TrapKind::Synchronous,
+            1 => TrapKind::Irq,
+            _ => TrapKind::Synchronous, // Default to Synchronous for unknown values
+        }
+    }
+}
+
 /// Equals to [`TrapKind::Synchronous`], used in assembly code.
 const EXCEPTION_SYNC: usize = TrapKind::Synchronous as usize;
 /// Equals to [`TrapKind::Irq`], used in assembly code.
 const EXCEPTION_IRQ: usize = TrapKind::Irq as usize;
 
-/// Get the exception code from CSR.ESTAT
-/// In LoongArch, ESTAT[21:0] stores exception code (ECODE)
+/// Get the exception code from GCSR_ESTAT (Guest Exception Status)
+/// In LoongArch, when a guest exception occurs, GCSR_ESTAT[21:16] stores exception code (ECODE)
 fn get_exception_code() -> usize {
-    let estat: usize;
-    unsafe {
-        core::arch::asm!("csrrd {}, 0x5", out(reg) estat);
-    }
-    estat & 0x1FFFFF // ECODE bits [20:0] (actually ESTAT[20:0] is ECODE, but check spec)
+    use crate::registers::gcsr_read;
+    let estat = unsafe { gcsr_read::<{ crate::registers::GCSR_ESTAT }>() };
+    (estat >> 16) & 0x3F // ECODE bits [21:16]
 }
 
-/// Get the exception subcode from CSR.ESTAT
-/// ESTAT[30:22] stores exception subcode (ESUBCODE)
+/// Get the exception subcode from GCSR_ESTAT
+/// GCSR_ESTAT[30:22] stores exception subcode (ESUBCODE)
 fn get_exception_subcode() -> usize {
-    let estat: usize;
-    unsafe {
-        core::arch::asm!("csrrd {}, 0x5", out(reg) estat);
-    }
+    use crate::registers::gcsr_read;
+    let estat = unsafe { gcsr_read::<{ crate::registers::GCSR_ESTAT }>() };
     (estat >> 22) & 0x1FF // ESUBCODE bits [30:22]
 }
 
-/// Get the bad virtual address from CSR.BADV
+/// Get the bad virtual address from GCSR_BADV (Guest Bad Virtual Address)
 fn get_badv() -> usize {
-    let badv: usize;
-    unsafe {
-        core::arch::asm!("csrrd {}, 0x7", out(reg) badv);
-    }
-    badv
+    use crate::registers::gcsr_read;
+    unsafe { gcsr_read::<{ crate::registers::GCSR_BADV }>() }
 }
 
-/// Get the bad instruction from CSR.BADI
+/// Get the bad instruction from GCSR_BADI (Guest Bad Instruction)
 fn get_badi() -> usize {
-    let badi: usize;
-    unsafe {
-        core::arch::asm!("csrrd {}, 0x8", out(reg) badi);
-    }
-    badi
+    use crate::registers::gcsr_read;
+    unsafe { gcsr_read::<{ crate::registers::GCSR_BADI }>() }
 }
 
 /// Handle synchronous exceptions that occur during the execution of a guest VM.
@@ -135,14 +136,14 @@ pub fn handle_exception_sync(ctx: &mut LoongArchContextFrame) -> AxResult<AxVCpu
             // - Return value is placed in a0
             // - sepc should be advanced by 4 (instruction length of hvcl)
 
-            let nr = ctx.get_a0(); // hypercall number
+            let nr = ctx.get_a0() as u64; // hypercall number
             let args = [
-                ctx.get_a1(),
-                ctx.get_a2(),
-                ctx.get_a3(),
-                ctx.get_a4(),
-                ctx.get_a5(),
-                ctx.get_a6(),
+                ctx.get_a1() as u64,
+                ctx.get_a2() as u64,
+                ctx.get_a3() as u64,
+                ctx.get_a4() as u64,
+                ctx.get_a5() as u64,
+                ctx.get_a6() as u64,
             ];
 
             trace!(
@@ -171,12 +172,19 @@ pub fn handle_exception_sync(ctx: &mut LoongArchContextFrame) -> AxResult<AxVCpu
             let is_exec = ecode == ECODE_PIF;
             let is_priv = ecode == ECODE_PPI;
 
-            // Return page fault exit reason
-            Ok(AxVCpuExitReason::PageFault {
-                addr: badv,
-                is_write,
-                is_exec,
-                is_priv,
+            // Return nested page fault exit reason
+            use axaddrspace::MappingFlags;
+            let mut access_flags = MappingFlags::empty();
+            if is_write {
+                access_flags |= MappingFlags::WRITE;
+            } else if is_exec {
+                access_flags |= MappingFlags::EXECUTE;
+            } else {
+                access_flags |= MappingFlags::READ;
+            }
+            Ok(AxVCpuExitReason::NestedPageFault {
+                addr: GuestPhysAddr::from(badv),
+                access_flags,
             })
         }
         ECODE_TLBR => {
@@ -188,12 +196,11 @@ pub fn handle_exception_sync(ctx: &mut LoongArchContextFrame) -> AxResult<AxVCpu
             );
 
             // For TLB refill, we need to emulate TLB miss handling
-            // For now, treat as page fault
-            Ok(AxVCpuExitReason::PageFault {
-                addr: badv,
-                is_write: false, // Cannot determine from TLBR alone
-                is_exec: false,
-                is_priv: false,
+            // For now, treat as nested page fault
+            use axaddrspace::MappingFlags;
+            Ok(AxVCpuExitReason::NestedPageFault {
+                addr: GuestPhysAddr::from(badv),
+                access_flags: MappingFlags::READ,
             })
         }
         ECODE_RSE => {
@@ -204,10 +211,9 @@ pub fn handle_exception_sync(ctx: &mut LoongArchContextFrame) -> AxResult<AxVCpu
                 badi, ctx.sepc
             );
 
-            // Return illegal instruction exit reason
-            Ok(AxVCpuExitReason::IllegalInstruction {
-                insn: badi,
-            })
+            // No IllegalInstruction variant in AxVCpuExitReason, treat as Halt
+            // TODO: Add proper handling for illegal instructions
+            Ok(AxVCpuExitReason::Halt)
         }
         // TODO: Handle other synchronous exceptions
         _ => {
@@ -253,36 +259,38 @@ core::arch::global_asm!(
 #[unsafe(no_mangle)]
 unsafe extern "C" fn vmexit_trampoline() -> ! {
     core::arch::naked_asm!(
-        // Currently `sp` points to the base address of `LoongArchVCpu.ctx`
+        // Currently `$sp` points to the base address of `LoongArchVCpu.ctx`
         // which stores guest's `LoongArchContextFrame`.
         // Calculate offset to `host_stack_top` field.
         // `host_stack_top` offset = size_of::<LoongArchContextFrame>()
         // LoongArchContextFrame size: 32 registers (256 bytes) + 4 CSRs (32 bytes) = 288 bytes
-        "addi.d x9, sp, 288",      // x9 now points to &LoongArchVCpu.host_stack_top
-        "ld.d x10, x9, 0",         // x10 = host_stack_top value
-        "move sp, x10",            // Restore host stack pointer
+        "addi.d $t0, $sp, 288",    // $t0 now points to &LoongArchVCpu.host_stack_top
+        "ld.d $t1, $t0, 0",        // $t1 = host_stack_top value
+        "move $sp, $t1",           // Restore host stack pointer
 
         // Restore host registers saved in run_guest()
-        // x1 (ra) was saved at offset 0, x21 at 8, x22-x31 at offsets 16-88
-        "ld.d x1, sp, 0",          // Restore ra (return address to run() method)
-        "ld.d x21, sp, 8",         // Restore s0/fp (context frame pointer)
-        "ld.d x22, sp, 16",
-        "ld.d x23, sp, 24",
-        "ld.d x24, sp, 32",
-        "ld.d x25, sp, 40",
-        "ld.d x26, sp, 48",
-        "ld.d x27, sp, 56",
-        "ld.d x28, sp, 64",
-        "ld.d x29, sp, 72",
-        "ld.d x30, sp, 80",
-        "ld.d x31, sp, 88",
+        // $ra was saved at offset 0, $s0 at 8, $s1-$s8 at offsets 16-72,
+        // $fp at 80, $tp at 88, $r21 at 96.
+        "ld.d $ra, $sp, 0",        // Restore ra (return address to run() method)
+        "ld.d $s0, $sp, 8",        // Restore s0 (context frame pointer)
+        "ld.d $s1, $sp, 16",
+        "ld.d $s2, $sp, 24",
+        "ld.d $s3, $sp, 32",
+        "ld.d $s4, $sp, 40",
+        "ld.d $s5, $sp, 48",
+        "ld.d $s6, $sp, 56",
+        "ld.d $s7, $sp, 64",
+        "ld.d $s8, $sp, 72",
+        "ld.d $fp, $sp, 80",
+        "ld.d $tp, $sp, 88",
+        "ld.d $r21, $sp, 96",
 
         // Adjust stack pointer (remove saved registers space: 14 registers * 8 bytes = 112 bytes)
-        "addi.d sp, sp, 14 * 8",
+        "addi.d $sp, $sp, 14 * 8",
 
         // Return control to LoongArchVCpu.run()
-        // The exit reason is already in a0 register (set by exception vector)
-        "jr x1"                    // Jump to return address (ra)
+        // The exit reason is already in $a0 register (set by exception vector)
+        "jr $ra"                   // Jump to return address (ra)
     )
 }
 
@@ -290,7 +298,7 @@ unsafe extern "C" fn vmexit_trampoline() -> ! {
 #[unsafe(no_mangle)]
 fn current_el_irq_handler(_ctx: &mut LoongArchContextFrame) {
     // TODO: Implement hypervisor-level IRQ handling
-    axvisor_api::arch::handle_irq()
+    // Note: handle_irq is not available in axvisor_api for LoongArch
 }
 
 /// Current EL synchronous exception handler (for hypervisor itself)
