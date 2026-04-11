@@ -1,46 +1,6 @@
-/*
- * Copyright 2025 The Axvisor Team
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-/*
- * LoongArch exception handling assembly code
- *
- * This file contains the low-level exception handling routines for LoongArch.
- * It includes:
- * - _run_guest: Entry point to run a guest VM
- * - _guest_exit: Handler for VM exits
- * - exception vectors for different trap types
- * - register save/restore macros
- */
-
 .section .text
 
-/*
- * Macro to save guest registers to LoongArchContextFrame
- *
- * On entry:
- *   - sp points to LoongArchContextFrame base address
- *   - All guest registers are in their original state
- *
- * On exit:
- *   - x0-x31, sepc, crmd, prmd, estat saved to context frame
- *   - sp unchanged
- */
 .macro SAVE_GUEST_REGS
-    // Save general purpose registers x0-x31
-    // Note: x0 is zero register but we save it for completeness
     st.d    $r0, $sp, 0
     st.d    $r1, $sp, 8
     st.d    $r2, $sp, 16
@@ -74,42 +34,26 @@
     st.d    $r30, $sp, 240
     st.d    $r31, $sp, 248
 
-    // Save GCSR (Guest CSR) registers using gcsrrd instruction
-    // These are the guest's CSR values, not host's
-    gcsrrd  $t0, 0x6      // GCSR_ERA (Guest Exception Return Address, same as sepc)
-    st.d    $t0, $sp, 256  // sepc field
-    gcsrrd  $t0, 0x0      // GCSR_CRMD (Guest Current Mode)
-    st.d    $t0, $sp, 264  // crmd field
-    gcsrrd  $t0, 0x1      // GCSR_PRMD (Guest Previous Mode)
-    st.d    $t0, $sp, 272  // prmd field
-    gcsrrd  $t0, 0x5      // GCSR_ESTAT (Guest Exception Status)
-    st.d    $t0, $sp, 280  // estat field
+    gcsrrd  $t0, 0x6
+    st.d    $t0, $sp, 256
+    gcsrrd  $t0, 0x0
+    st.d    $t0, $sp, 264
+    gcsrrd  $t0, 0x1
+    st.d    $t0, $sp, 272
+    gcsrrd  $t0, 0x5
+    st.d    $t0, $sp, 280
 .endm
 
-/*
- * Macro to restore guest registers from LoongArchContextFrame
- *
- * On entry:
- *   - sp points to LoongArchContextFrame base address
- *   - Context frame contains saved register values
- *
- * On exit:
- *   - x0-x31, sepc, crmd, prmd, estat restored
- *   - sp unchanged
- */
 .macro RESTORE_GUEST_REGS
-    // Restore GCSR (Guest CSR) registers using gcsrwr instruction
-    ld.d    $t0, $sp, 256  // GCSR_ERA (sepc)
+    ld.d    $t0, $sp, 256
     gcsrwr  $t0, 0x6
-    ld.d    $t0, $sp, 264  // GCSR_CRMD
+    ld.d    $t0, $sp, 264
     gcsrwr  $t0, 0x0
-    ld.d    $t0, $sp, 272  // GCSR_PRMD
+    ld.d    $t0, $sp, 272
     gcsrwr  $t0, 0x1
-    ld.d    $t0, $sp, 280  // GCSR_ESTAT
+    ld.d    $t0, $sp, 280
     gcsrwr  $t0, 0x5
 
-    // Restore general purpose registers x1-x31
-    // Note: x0 is zero register, skip it
     ld.d    $r1, $sp, 8
     ld.d    $r2, $sp, 16
     ld.d    $r3, $sp, 24
@@ -141,218 +85,93 @@
     ld.d    $r29, $sp, 232
     ld.d    $r30, $sp, 240
     ld.d    $r31, $sp, 248
-
-    // x0 is zero register, no need to restore
-    ld.d    $r0, $sp, 0    // Load but won't affect zero register
+    ld.d    $r0, $sp, 0
 .endm
 
-/*
- * Enter the guest given in `LoongArchContextFrame` from `a0`
- *
- * Parameters:
- *   a0 - Pointer to LoongArchContextFrame (guest state)
- *
- * This function:
- * 1. Saves host context (minimal)
- * 2. Restores guest context from LoongArchContextFrame
- * 3. Enters guest mode with ertn (Exception Return) instruction
- */
 .global _run_guest
 _run_guest:
-    // a0 contains pointer to LoongArchContextFrame
-    // Save return address (ra) temporarily
     move    $t1, $ra
-
-    // Keep the guest context pointer in host SAVE3 so vmexit vectors can
-    // recover it without stealing the host percpu register `$r21`.
     csrwr   $a0, 0x33
-
-    // Set sp to point to context frame
     move    $sp, $a0
-
-    // Restore guest registers from context frame
     RESTORE_GUEST_REGS
-
-    // Return to guest using ertn
-    // This will jump to ERA (sepc) and restore previous mode
     ertn
+    jr      $t1
 
-    // Should not reach here
-    jr      $t1  // Return to caller if ertn fails
-
-/*
- * Guest exit handler - called from exception vector
- *
- * DEPRECATED: Exception vectors now directly jump to vmexit_trampoline
- * after saving context and setting a0. This function is kept for
- * compatibility but should not be used.
- */
 .global _guest_exit
 _guest_exit:
-    // sp points to LoongArchContextFrame (set by exception vector)
-    // Context is already saved by exception vector
-    // a0 should already contain exit reason (set by exception vector)
-    // Jump to vmexit_trampoline
     b       vmexit_trampoline
 
-/*
- * Exception vector table
- * LoongArch requires exception vectors at EENTRY + (ECODE * vector_offset)
- * Each vector is 80 bytes (0x50) aligned
- */
 .section .vectors, "ax"
-.align 12  // 4KB alignment for exception vector base
+.align 12
 .global _exception_vectors
 _exception_vectors:
-    // Vector for ECODE 0x0 - Int (Interrupt)
     .org 0x0
     b       _irq_handler_vector
-
-    // Vector for ECODE 0x1 - PIL (Page Invalid Load)
     .org 0x80
     b       _sync_handler_vector
-
-    // Vector for ECODE 0x2 - PIS (Page Invalid Store)
     .org 0x100
     b       _sync_handler_vector
-
-    // Vector for ECODE 0x3 - PIF (Page Invalid Fetch)
     .org 0x180
     b       _sync_handler_vector
-
-    // Vector for ECODE 0x4 - PME (Page Modified Exception)
     .org 0x200
     b       _sync_handler_vector
-
-    // Vector for ECODE 0x5 - PPI (Page Privilege Illegal)
     .org 0x280
     b       _sync_handler_vector
-
-    // Vector for ECODE 0x8 - TLBR (TLB Refill)
     .org 0x400
     b       _sync_handler_vector
-
-    // Vector for ECODE 0x9 - TLBL (TLB Load)
     .org 0x480
     b       _sync_handler_vector
-
-    // Vector for ECODE 0xA - TLBS (TLB Store)
     .org 0x500
     b       _sync_handler_vector
-
-    // Vector for ECODE 0xB - TLBM (TLB Modify)
     .org 0x580
     b       _sync_handler_vector
-
-    // Vector for ECODE 0xC - FPE (Floating Point Exception)
     .org 0x600
     b       _sync_handler_vector
-
-    // Vector for ECODE 0xD - SXE (System Call Exception)
     .org 0x680
     b       _sync_handler_vector
-
-    // Vector for ECODE 0xE - BRK (Breakpoint Exception)
     .org 0x700
     b       _sync_handler_vector
-
-    // Vector for ECODE 0xF - DBE (Debug Exception)
     .org 0x780
     b       _sync_handler_vector
-
-    // Vector for ECODE 0x10 - RSE (Reserved Instruction Exception)
     .org 0x800
     b       _sync_handler_vector
-
-    // Vector for ECODE 0x11 - FPD (Floating Point Disabled)
     .org 0x880
     b       _sync_handler_vector
-
-    // Vector for ECODE 0x12 - LSXE (LSX Exception)
     .org 0x900
     b       _sync_handler_vector
-
-    // Vector for ECODE 0x13 - LASXE (LASX Exception)
     .org 0x980
     b       _sync_handler_vector
-
-    // Vector for ECODE 0x14 - BTE (Binary Translation Exception)
-    .org 0xA00
+    .org 0xa00
     b       _sync_handler_vector
-
-    // Vector for ECODE 0x15 - GSPR (Guest SPR Access)
-    .org 0xA80
+    .org 0xa80
     b       _sync_handler_vector
-
-    // Vector for ECODE 0x16 - HVC (Hypervisor Call) - Most important for us!
-    .org 0xB00
+    .org 0xb00
     b       _hvc_handler_vector
-
-    // Vector for ECODE 0x17 - GCSC (Guest CSR Access)
-    .org 0xB80
+    .org 0xb80
+    b       _sync_handler_vector
+    .org 0xc00
+    b       _sync_handler_vector
+    .org 0xc80
+    b       _sync_handler_vector
+    .org 0xd00
+    b       _sync_handler_vector
+    .org 0xd80
     b       _sync_handler_vector
 
-    // Vector for ECODE 0x18 - GDVPE (Guest DVPE)
-    .org 0xC00
-    b       _sync_handler_vector
-
-    // Vector for ECODE 0x19 - GPERF (Guest Performance)
-    .org 0xC80
-    b       _sync_handler_vector
-
-    // Vector for ECODE 0x1A - GTIMER (Guest Timer)
-    .org 0xD00
-    b       _sync_handler_vector
-
-    // Vector for ECODE 0x1B - GIPI (Guest IPI)
-    .org 0xD80
-    b       _sync_handler_vector
-
-/*
- * IRQ handler vector
- */
 _irq_handler_vector:
-    // Recover the context frame pointer saved by `_run_guest`.
     csrrd   $sp, 0x33
-
-    // Save guest context (including original a0)
     SAVE_GUEST_REGS
-
-    // Set exit reason to Irq (1) in a0 for Rust handler
-    li.d    $a0, 1  // TrapKind::Irq
-
-    // Jump to common exit handler
+    li.d    $a0, 1
     b       _guest_exit
 
-/*
- * Synchronous exception handler vector (for most exceptions)
- */
 _sync_handler_vector:
-    // Recover the context frame pointer saved by `_run_guest`.
     csrrd   $sp, 0x33
-
-    // Save guest context
     SAVE_GUEST_REGS
-
-    // Set exit reason to Synchronous (0)
-    li.d    $a0, 0  // TrapKind::Synchronous
-
-    // Jump to common exit handler
+    li.d    $a0, 0
     b       _guest_exit
 
-/*
- * HVC handler vector (special handling for hypercalls)
- */
 _hvc_handler_vector:
-    // Recover the context frame pointer saved by `_run_guest`.
     csrrd   $sp, 0x33
-
-    // Save guest context
     SAVE_GUEST_REGS
-
-    // Set exit reason to Synchronous (0)
-    // HVC is handled as synchronous exception in Rust
-    li.d    $a0, 0  // TrapKind::Synchronous
-
-    // Jump to common exit handler
+    li.d    $a0, 0
     b       _guest_exit
